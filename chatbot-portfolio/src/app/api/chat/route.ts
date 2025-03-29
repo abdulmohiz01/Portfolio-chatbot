@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf';
+import { TextLoader } from 'langchain/document_loaders/fs/text';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { MemoryVectorStore } from 'langchain/vectorstores/memory';
 import { Ollama } from '@langchain/community/llms/ollama';
 import { OllamaEmbeddings } from '@langchain/community/embeddings/ollama';
 import { RetrievalQAChain } from 'langchain/chains';
 import path from 'path';
+import fs from 'fs';
 
 let vectorStore: MemoryVectorStore | null = null;
 let chain: RetrievalQAChain | null = null;
@@ -80,11 +82,28 @@ async function initialize(): Promise<{ vectorStore: MemoryVectorStore, chain: Re
         console.warn(`Ollama is not available or ${MODEL_NAME} model not found. Will use fallback embeddings.`);
       }
       
-      // Load PDF
-      const pdfPath = path.join(process.cwd(), 'public', 'my cv.pdf');
-      const loader = new PDFLoader(pdfPath);
-      const docs = await loader.load();
-      console.log(`Loaded ${docs.length} documents from PDF`);
+      // Try to load CV from text file first (more reliable)
+      let docs = [];
+      const textPath = path.join(process.cwd(), 'public', 'cv.txt');
+      
+      try {
+        if (fs.existsSync(textPath)) {
+          console.log('Loading CV from text file...');
+          const loader = new TextLoader(textPath);
+          docs = await loader.load();
+          console.log(`Loaded text CV successfully`);
+        } else {
+          // Fallback to PDF if text file doesn't exist
+          console.log('Text CV not found, falling back to PDF...');
+          const pdfPath = path.join(process.cwd(), 'public', 'my cv.pdf');
+          const loader = new PDFLoader(pdfPath);
+          docs = await loader.load();
+          console.log(`Loaded ${docs.length} documents from PDF`);
+        }
+      } catch (error) {
+        console.error('Error loading CV:', error);
+        throw new Error('Failed to load CV data');
+      }
       
       // Split text into chunks
       const textSplitter = new RecursiveCharacterTextSplitter({
@@ -184,6 +203,9 @@ function cleanModelResponse(text: string, originalMessage: string): string {
   // Fix any instances of "I's got" pattern
   text = text.replace(/I's got/gi, "I've got");
   
+  // Fix any instances of "I's set" pattern
+  text = text.replace(/I's set/gi, "I'm set");
+  
   // Fix any instances of possessive "My" that should be lowercase
   text = text.replace(/\bMy ([a-z])/g, "my $1");
   
@@ -212,6 +234,32 @@ function cleanModelResponse(text: string, originalMessage: string): string {
   text = text.replace(/I have used/gi, "I've used");
   text = text.replace(/I have worked/gi, "I've worked");
   text = text.replace(/not familiar with I/gi, "haven't");
+  text = text.replace(/\bI does not\b/gi, "I don't");
+  text = text.replace(/\bI do not\b/gi, "I don't");
+  
+  // Add more common error patterns
+  text = text.replace(/\bI has\b/gi, "I've");
+  text = text.replace(/\bI uses\b/gi, "I use");
+  text = text.replace(/\bI works\b/gi, "I work");
+  text = text.replace(/\bMy\s+(\w+)\s+projects/gi, "my $1 projects");
+  text = text.replace(/\bI\s+[a-zA-Z]+ed\s+in\s+My\b/gi, (match) => match.replace("My", "my"));
+  text = text.replace(/So,\s*:/gi, "");
+  
+  // Additional cleaning to handle cases where multiple sentences repeat the same information with slight variations
+  const sentenceParts = text.split(/(?<=\.)(?=\s+[A-Z])/);
+  if (sentenceParts.length > 2) {
+    // Keep only the cleanest sentence(s)
+    const cleanedSentences = sentenceParts.filter(s => 
+      !s.includes(" has ") && 
+      !s.includes(" uses ") && 
+      !s.includes("So, :") &&
+      !s.match(/I.*?My/i)
+    );
+    
+    if (cleanedSentences.length > 0) {
+      text = cleanedSentences.join(' ');
+    }
+  }
   
   // Fix any "The answer is" formulations
   text = text.replace(/The answer is that/gi, "");
@@ -236,51 +284,108 @@ function cleanModelResponse(text: string, originalMessage: string): string {
   // Reconstruct the text
   text = uniqueSentences.join(' ');
 
-  // Handle specific question types with hardcoded responses - ORDER MATTERS!
-
-  // Handle skills listing question - checking original message first and making pattern more specific
-  if (/\b(list|what|your)\b.*\bskills\b/i.test(originalMessage) || originalMessage.toLowerCase().includes("skills you have")) {
-    return "Here are my key skills:<br><br>1. **Front-end Development**<br>   • React.js<br>   • Next.js<br>   • JavaScript/TypeScript<br>   • HTML5/CSS3<br><br>2. **UI Frameworks**<br>   • Tailwind CSS<br>   • Bootstrap<br>   • Material UI<br><br>3. **Backend Development**<br>   • Node.js<br>   • Express.js<br>   • MongoDB<br>   • REST APIs<br><br>4. **Other Skills**<br>   • Git/GitHub<br>   • Responsive Design<br>   • Photoshop<br>   • SEO Optimization<br>   • Web Performance";
-  }
+  // Only keep a few essential conversational handlers
+  // and let the RAG system handle the rest
 
   // Handle greeting messages
-  if (/^(hi|hello|hey|greetings|howdy)\b/i.test(originalMessage.trim())) {
-    return "Hi there! I'm Abdul Mohiz. How can I help you today?";
+  if (/^(hi|hello|hey|greetings|howdy|hii+|sup|yo)[\s!]*$/i.test(originalMessage.trim())) {
+    return "Hi there! I'm Abdul Mohiz. Thanks for visiting my portfolio! Feel free to ask me anything about my experience, skills, projects, or background.";
   }
 
-  // Handle missing graduation information
-  if ((/graduation|graduate|degree/i.test(text)) && 
-      (/don't have|not provided|no information|isn't provided|don't know/i.test(text))) {
-    return "I'm expected to graduate in 2026 with my Bachelor of Computer Science from COMSATS ISL. I'm currently in my ongoing studies and have completed about half of my degree program so far.";
+  // Handle conversational questions like "how are you"
+  if (/^how are you(\??|\s|$)|^how('s| is) it going|^how('s| have) you been|^what'?s up$/i.test(originalMessage.trim())) {
+    return "I'm doing well, thanks for asking! I'm currently working on some exciting web development projects and continuing my studies in Computer Science. How can I help you today?";
   }
   
-  // Handle photoshop question by providing a clear, concise answer
-  if ((/\bphotoshop\b|\badobe\b/i.test(originalMessage)) && (/\bused\b|\buse\b|\bexperience\b|\bskill\b/i.test(originalMessage))) {
-    return "Yes, I've used Photoshop for several years. I've worked on image manipulation, background editing, and graphic design for my clients on Fiverr. I also use Photoshop regularly when developing e-commerce stores to edit product images and create promotional graphics.";
+  // Handle Shopify questions specifically
+  if (/shopify|used shopify|shopify experience|worked (with|on) shopify/i.test(originalMessage)) {
+    return "Yes, I've worked with Shopify as a Designer on Upwork (2023-2024). I built e-commerce stores from scratch, optimized product pages for SEO, and managed inventory and customer interactions.";
   }
-
-  // Handle project questions
-  if (/\bproject\b|\bprojects\b|\bportfolio\b|\bmade\b|\bcreate\b|\bdevelop\b/i.test(originalMessage)) {
-    return "Yes, I've worked on several projects:<br><br>1. **E-commerce Store**<br>   • Built with Next.js and Tailwind CSS<br>   • Features product listings, cart functionality, and payment integration<br><br>2. **Personal Blog**<br>   • Developed using Next.js and MongoDB<br>   • Includes custom authentication system<br><br>3. **Portfolio Website**<br>   • Created responsive design with React<br>   • Optimized for performance and SEO<br><br>4. **Dashboard UI**<br>   • Built admin interface with data visualization<br>   • Used React and Chart.js for analytics display<br><br>I constantly work on side projects to improve my skills and explore new technologies.";
+  
+  // Handle simple math questions
+  const mathPattern = /(\d+\s*[\+\-\*\/]\s*\d+\s*=\s*\?)|what('s| is)\s+(\d+\s*[\+\-\*\/]\s*\d+)/i;
+  if (mathPattern.test(originalMessage)) {
+    // Extract the math expression
+    const matches = originalMessage.match(/(\d+)\s*([\+\-\*\/])\s*(\d+)/);
+    if (matches) {
+      const num1 = parseInt(matches[1]);
+      const operator = matches[2];
+      const num2 = parseInt(matches[3]);
+      let result;
+      
+      switch (operator) {
+        case '+': result = num1 + num2; break;
+        case '-': result = num1 - num2; break;
+        case '*': result = num1 * num2; break;
+        case '/': result = num1 / num2; break;
+      }
+      
+      return `${result}`;
+    }
   }
-
-  // Handle client work questions
-  if (/\bclient\b|\bclients\b|\bwork\b|\bworked\b|\bfreelance\b/i.test(originalMessage)) {
-    return "Yes, I've worked with various clients:<br><br>1. **Fiverr Clients**<br>   • Provided web development and design services for international clients<br><br>2. **E-commerce Business**<br>   • Built and maintained online stores for small businesses<br><br>3. **Content Creators**<br>   • Developed portfolio websites to showcase their work<br><br>4. **Local Businesses**<br>   • Created web presence and digital marketing solutions<br><br>I enjoy working with clients to understand their needs and deliver solutions that exceed their expectations.";
+  
+  // Handle common factual questions that any person would know
+  if (/what (day|month|year) is (it|today|now)/i.test(originalMessage) || 
+      /what is the (date|time) (today|now)/i.test(originalMessage)) {
+    const now = new Date();
+    return `It's ${now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.`;
   }
-
-  // Handle NextJS questions
-  if (/next\.?js|create.*next|help.*next/i.test(originalMessage)) {
-    return "I've worked extensively with Next.js. To create a new Next.js app, run: `npx create-next-app@latest my-app`. This sets up a project with all the essentials. I've used Next.js for e-commerce sites and portfolio projects, leveraging its server-side rendering and routing capabilities.";
+  
+  // Handle basic questions that any person would know (to make the chatbot seem more human)
+  if (/how many (days|hours) (are|is) (in|there in) a (week|day)/i.test(originalMessage)) {
+    if (originalMessage.toLowerCase().includes('week')) {
+      return "There are 7 days in a week.";
+    } else if (originalMessage.toLowerCase().includes('day')) {
+      return "There are 24 hours in a day.";
+    }
   }
-
-  // Handle general "tell me about yourself" questions
-  if (/tell.*about yourself|more about you|tell.*more|who are you/i.test(originalMessage)) {
-    return "I'm a web developer currently pursuing my Bachelor's in Computer Science at COMSATS ISL (graduating 2026). I specialize in React and Next.js development, and have built e-commerce stores, portfolio sites, and blogs. I also have experience with UI frameworks like Tailwind CSS, and provide Photoshop services for clients on Fiverr.";
+  
+  // Handle personal information questions that shouldn't be answered
+  if (/\bage\b|\bdob\b|\bdate\s+of\s+birth\b|\bbirthday\b|\bborn\b|\bwhen\s+were\s+you\s+born\b|\bhow\s+old\b|\baddress\b|\blocation\b|\bphone\b|\bemail\b|\bcontact\b|\bfamily\b|\bparents\b|\bmarried\b|\bwife\b|\bhusband\b|\bchildren\b|\bkids\b|\bsibling\b|\breligion\b|\brethnicity\b/i.test(originalMessage)) {
+    return "I prefer not to share that personal information.";
+  }
+  
+  // Make answers more concise by extracting the main information
+  if (text.length > 200) {
+    // Look for the first 1-2 sentences that directly answer the question
+    const firstFewSentences = text.split(/(?<=\.)(?=\s+[A-Z])/).slice(0, 2).join(' ');
+    
+    // If we find a direct answer in the first sentences, use it
+    if (firstFewSentences.length > 20 && firstFewSentences.includes(originalMessage.split(' ')[0])) {
+      text = firstFewSentences;
+    } else if (text.includes('I worked') || text.includes("I've worked") || text.includes('I have worked')) {
+      // Extract work experience information
+      const workPattern = /(I('ve| have)? worked[^.]+\.)/i;
+      const workMatch = text.match(workPattern);
+      if (workMatch && workMatch[0]) {
+        text = workMatch[0].trim();
+      }
+    }
+  }
+  
+  // Format lists with HTML line breaks if detected in the response
+  if ((text.includes('• ') || /\d\.\s/.test(text)) && 
+      (originalMessage.toLowerCase().includes('skills') || 
+       originalMessage.toLowerCase().includes('project') || 
+       originalMessage.toLowerCase().includes('experience'))) {
+    // Convert list items to HTML format
+    text = text.replace(/(\d\.)\s+([^.]+)/g, '<br><br>$1 $2');
+    text = text.replace(/•\s+([^.]+)/g, '<br>• $1');
+    return text;
   }
   
   // Trim any excess whitespace that might be left
-  return text.trim();
+  text = text.trim();
+  
+  // Check for phrases indicating the model doesn't know the answer
+  if (/not provided in the (given context|context|information|data)/i.test(text) || 
+      /don't have (that|this|the) information/i.test(text) ||
+      /no information (is )?(available|provided)/i.test(text) ||
+      /unable to determine|cannot determine|don't know/i.test(text)) {
+    return "I don't have that information in my background. Feel free to ask me about my skills, education, or projects instead.";
+  }
+  
+  return text;
 }
 
 export async function POST(req: NextRequest) {
@@ -349,21 +454,47 @@ export async function POST(req: NextRequest) {
       // Add a prompt prefix to make the model respond as if it's Abdul Mohiz himself
       const enhancedQuery = `You are not an AI assistant. You ARE Abdul Mohiz himself. 
 
-Key facts about yourself:
-- You're pursuing a Bachelor of Computer Science at COMSATS ISL
-- You started your degree in 2022 and will graduate in 2026
-- You're currently in the middle of your program
-- You have experience in web development, particularly with React, Next.js and other modern frameworks
+Key facts about yourself from your CV:
+- You're a Front End Web Developer based in Mansehra, Pakistan
+- You're pursuing a Bachelor of Computer Science at COMSATS ISL (2022-2026)
+- You have experience as a Shopify Designer on Upwork (2023-2024)
+- You've worked as a Photoshop Editor on Fiverr (2022-2023)
+- You've built projects including a Portfolio Website, Blog Website, Nexus Encryption, and a React Portfolio with Three.js
+
+Your skills include:
+- Frontend Development: Next.js, React.js, JavaScript, HTML5, CSS3
+- UI Frameworks: Tailwind CSS, Material UI, Bootstrap
+- Backend Technologies: SQL, PostgreSQL, MongoDB
+- Tools: Git, Adobe Photoshop
+- AI Technologies: Gen AI, Langchain
 
 NEVER refer to yourself in the third person. ALWAYS use first-person pronouns like "I", "me", "my" when talking about your experiences, skills, education, or opinions. 
 
-Important conversation guidelines:
+Important response guidelines:
+- Keep responses concise - ideally 1-2 sentences unless more detail is explicitly requested
+- Be direct and to the point - don't elaborate unnecessarily
+- Answer the exact question asked without adding tangential information
 - Don't use phrases like "Abdul Mohiz is" or "He will" - instead use "I am" and "I will"
 - Don't start your responses with phrases like "Helpful:" or "I'll be helpful"
 - Don't label your responses with prefixes or metadata
 - Don't say "Let me help you with that" or similar AI-assistant phrases
 - Jump directly into answering the question in a natural, conversational way
 - Be personal, conversational, and authentic as if you're having a direct conversation
+
+For skills questions:
+- Present skills in 4 categories: Frontend Development, UI Frameworks, Backend Technologies, and Tools
+- Use bullet points with HTML format: "• Next.js<br>• React.js"
+- Include relevant details about your experience with each skill
+
+For project questions:
+- Describe your projects in numbered format: "1. Portfolio Website"
+- List key features and technologies used for each project
+- Mention that you're constantly working on improving your skills
+
+For experience questions:
+- Mention both your Shopify design work on Upwork and Photoshop editing on Fiverr
+- Include specific responsibilities and achievements
+- Express enthusiasm about client work and exceeding expectations
 
 Question: ${message}`;
       

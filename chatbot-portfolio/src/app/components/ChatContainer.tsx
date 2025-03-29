@@ -28,26 +28,12 @@ interface SystemStatus {
 const ChatContainer: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
-      id: '1',
-      text: 'Hi there! I\'m Abdul Mohiz. Thanks for visiting my portfolio! How can I help you today?',
-      sender: 'Abdul Mohiz',
-      isUser: false,
-      timestamp: new Date(),
-    },
-    {
-      id: '2',
-      text: 'Feel free to ask me anything about my experience, skills, projects, or background!',
-      sender: 'Abdul Mohiz',
-      isUser: false,
-      timestamp: new Date(),
-    },
-    {
       id: '3',
       text: 'Initializing chat... This might take a moment to connect.',
       sender: 'System',
       isUser: false,
       timestamp: new Date(),
-    },
+    }
   ]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSystemReady, setIsSystemReady] = useState<boolean>(false);
@@ -55,14 +41,29 @@ const ChatContainer: React.FC = () => {
   const [streamedContent, setStreamedContent] = useState<string>('');
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [userHasScrolled, setUserHasScrolled] = useState<boolean>(false);
+  const [hasInitialized, setHasInitialized] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const streamAbortController = useRef<AbortController | null>(null);
+  const [systemMessage, setSystemMessage] = useState<string>('Checking system status...');
+  const [isSystemError, setIsSystemError] = useState<boolean>(false);
 
   // Check if the system is initialized
   useEffect(() => {
+    let isInitializing = false;
+
     const checkSystemStatus = async () => {
+      // Skip if already initialized or currently initializing
+      if (hasInitialized || isInitializing) return;
+      
+      // Set flag to prevent concurrent initialization
+      isInitializing = true;
+      
       try {
+        setIsLoading(true);
+        setSystemMessage('Checking system status...');
+        
+        // Special message to check system status
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: {
@@ -70,79 +71,41 @@ const ChatContainer: React.FC = () => {
           },
           body: JSON.stringify({ message: 'system_check' }),
         });
-
-        if (response.ok) {
-          const data: SystemStatus = await response.json();
-          setIsSystemReady(data.status === 'ready');
+        
+        const data = await response.json() as SystemStatus;
+        
+        if (data.status === 'ready') {
+          setIsSystemReady(true);
+          setModelName(data.model || 'unknown');
+          setHasInitialized(true);
           
-          if (data.status === 'ready' && data.model) {
-            setModelName(data.model);
-            // Remove the system message from the messages array
-            setMessages(prev => 
-              prev.filter(msg => msg.id !== '3')
-            );
-          } else if (data.status === 'initializing') {
-            // Update with initializing status
-            setMessages(prev => 
-              prev.filter(msg => msg.id !== '3').concat({
-                id: '3',
-                text: 'Still connecting... Please wait a moment.',
-                sender: 'System',
-                isUser: false,
-                timestamp: new Date(),
-              })
-            );
-          } else if (data.status === 'error') {
-            // Show error message
-            setMessages(prev => 
-              prev.filter(msg => msg.id !== '3').concat({
-                id: '3',
-                text: `Sorry, I'm having trouble connecting right now. Please try again later.`,
-                sender: 'System',
-                isUser: false,
-                timestamp: new Date(),
-              })
-            );
-          }
-        } else {
-          // Handle error response
-          setMessages(prev => 
-            prev.filter(msg => msg.id !== '3').concat({
-              id: '3',
-              text: 'Sorry, I cannot connect at the moment. Please try again later.',
-              sender: 'System',
-              isUser: false,
-              timestamp: new Date(),
-            })
-          );
+          // Remove system message
+          setMessages([]);
+          
+          // Set a timeout to let the UI update first, then stream the welcome message
+          setTimeout(() => {
+            const welcomeMessage = "Hi there! I'm Abdul Mohiz. Thanks for visiting my portfolio! Feel free to ask me anything about my experience, skills, projects, or background.";
+            handleStreamedResponse(welcomeMessage, true);
+          }, 100);
+        } else if (data.status === 'initializing') {
+          setSystemMessage('System is initializing. Please wait...');
+          // Poll again in a few seconds
+          setTimeout(checkSystemStatus, 3000);
+        } else if (data.status === 'error') {
+          setSystemMessage(`Error: ${data.error || 'Unknown error'}`);
+          setIsSystemError(true);
         }
       } catch (error) {
         console.error('Error checking system status:', error);
-        setMessages(prev => 
-          prev.filter(msg => msg.id !== '3').concat({
-            id: '3',
-            text: 'Connection error. Please check your internet and try again.',
-            sender: 'System',
-            isUser: false,
-            timestamp: new Date(),
-          })
-        );
+        setSystemMessage('Error connecting to the system. Please make sure the server is running.');
+        setIsSystemError(true);
+      } finally {
+        setIsLoading(false);
       }
     };
 
     checkSystemStatus();
-    
-    // Poll for status every 5 seconds until ready
-    const intervalId = setInterval(() => {
-      if (!isSystemReady) {
-        checkSystemStatus();
-      } else {
-        clearInterval(intervalId);
-      }
-    }, 5000);
-    
-    return () => clearInterval(intervalId);
-  }, [isSystemReady]);
+  }, []);
 
   // Clean up streaming on unmount
   useEffect(() => {
@@ -232,47 +195,60 @@ const ChatContainer: React.FC = () => {
   };
 
   // Process streamed responses
-  const handleStreamedResponse = async (text: string) => {
+  const handleStreamedResponse = async (text: string, isWelcome: boolean = false) => {
     setIsStreaming(true);
     const messageId = addStreamingPlaceholder();
     let content = '';
     
     try {
-      // Create abort controller for cancelling stream
-      streamAbortController.current = new AbortController();
-      const signal = streamAbortController.current.signal;
-      
-      // Call API for streamed response
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ message: text, stream: true }),
-        signal,
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('Response body is not readable');
-      }
-      
-      const decoder = new TextDecoder();
-      
-      // Read the stream
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      // If this is the welcome message, simulate streaming rather than calling API
+      if (isWelcome) {
+        // Simulate typing the welcome message
+        for (let i = 0; i < text.length; i++) {
+          // Add each character with a delay
+          content += text[i];
+          updateStreamedMessage(messageId, content);
+          setStreamedContent(content);
+          // Small delay to simulate typing
+          await new Promise(resolve => setTimeout(resolve, 30));
+        }
+      } else {
+        // Create abort controller for cancelling stream
+        streamAbortController.current = new AbortController();
+        const signal = streamAbortController.current.signal;
         
-        // Decode the chunk and add to content
-        const chunk = decoder.decode(value, { stream: true });
-        content += chunk;
-        updateStreamedMessage(messageId, content);
-        setStreamedContent(content);
+        // Call API for streamed response
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ message: text, stream: true }),
+          signal,
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('Response body is not readable');
+        }
+        
+        const decoder = new TextDecoder();
+        
+        // Read the stream
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          // Decode the chunk and add to content
+          const chunk = decoder.decode(value, { stream: true });
+          content += chunk;
+          updateStreamedMessage(messageId, content);
+          setStreamedContent(content);
+        }
       }
       
       setIsSystemReady(true); // If we got a response, the system is ready
@@ -356,7 +332,7 @@ const ChatContainer: React.FC = () => {
     }
   };
 
-  const handleSendMessage = async (text: string) => {
+  const handleSendMessage = async (text: string, isStreamed: boolean = true) => {
     if (!text.trim() || isLoading) return;
 
     // Add user message
@@ -374,8 +350,11 @@ const ChatContainer: React.FC = () => {
     // Reset the userHasScrolled flag when sending a new message
     setUserHasScrolled(false);
     
-    // Always use streaming for all responses
-    await handleStreamedResponse(text);
+    if (isStreamed) {
+      await handleStreamedResponse(text);
+    } else {
+      await handleStandardResponse(text);
+    }
   };
 
   return (

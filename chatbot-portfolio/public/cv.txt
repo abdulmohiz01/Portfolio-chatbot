@@ -1,0 +1,54 @@
+ABDUL MOHIZ
+Front End Web Developer
+Email: skylark7768@gmail.com
+Phone: 03484978982
+Location: Mansehra, Pakistan
+
+EDUCATION:
+- Bachelor of Computer Science, COMSATS ISL (2022-2026)
+
+SKILLS:
+- Frontend Development: Next.js, React.js, JavaScript, HTML5, CSS3
+- UI Frameworks: Tailwind CSS, Material UI, Bootstrap
+- Backend Technologies: SQL, PostgreSQL, MongoDB
+- Tools: Git, Adobe Photoshop
+- AI Technologies: Gen AI, Langchain
+
+EXPERIENCE:
+1. Shopify Designer - Upwork (2023-2024)
+   - Built professional e-commerce stores from scratch
+   - Optimized product pages for SEO
+   - Managed inventory and customer interactions
+
+2. Photoshop Editor - Fiverr (2022-2023)
+   - Provided image manipulation services
+   - Specialized in background editing
+   - Created graphics for clients' promotional materials
+
+PROJECTS:
+1. Portfolio Website
+   - Built using Next.js, Tailwind CSS, Framer Motion, Nodemailer
+   - Responsive design with smooth animations
+   - Contact form functionality
+
+2. Blog Website
+   - Developed using Next.js, Tailwind CSS, MongoDB
+   - Content management system
+   - User authentication
+
+3. Nexus Encryption
+   - Platform showcasing encryption techniques (RSA, AES, DES, Vigenère)
+   - Built with Next.js, Tailwind CSS, MUI, and Resend
+   - Implemented basic SEO optimization
+
+4. React Portfolio with Three.js
+   - Handled outsourced project
+   - Integrated Three.js for interactive elements
+   - Refined design and user experience
+
+CERTIFICATIONS:
+- The Complete Web Development Bootcamp (Udemy, 2023)
+- Introduction to HTML5 (Coursera, 2022)
+- Introduction to CSS3 (Coursera, 2022)
+- Adobe Photoshop
+- Shopify Designing 
